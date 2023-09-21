@@ -391,15 +391,13 @@ Writer.Block.OrderedList = function(e)
 end
 
 Writer.Block.DefinitionList = function(e)
-    -- To simplify their treatment, blocks after the first one in definitions
-    -- are put on the next line and indented by a single space. It is not very
-    -- pretty (better would be to indent them by TAB_SIZE or up to the colon),
-    -- but valid Typst syntax.
     local function render_term(term)
         return concat { concat { "/", space, inlines(term), ":" } }
     end
     local function render_definition(def)
-        return concat { " ", blocks(def), cr }
+        -- XXX if def starts with (or contains) a Plain then should attempt
+        --     to create a compact list?
+        return concat { space, nest(blocks(def), TAB_SIZE), blankline }
     end
     local function render_item(item)
         local term, definitions = table.unpack(item)
@@ -407,8 +405,7 @@ Writer.Block.DefinitionList = function(e)
         return concat { render_term(term), inner }
     end
 
-    local sep = cr
-    return concat(e.content:map(render_item), sep)
+    return concat(e.content:map(render_item), cr)
 end
 
 Writer.Block.CodeBlock = function(code)
@@ -456,11 +453,14 @@ Writer.Block.BlockQuote = function(e)
 end
 
 Writer.Block.Div = function(div)
+    -- XXX entry-spacing is ignored
+    local labs = labels(div.attr, {"entry-spacing"}, "div")
+
     -- can't indent divs;  might introduce unwanted leading space into literals
     -- XXX this is a pity (it makes the Typst code harder to read);
     --     should keep track of whether the div contains any literal content
     return concat { blankline,
-                    block_wrap(blocks(div.content), nil, div.attr, 0),
+                    block_wrap(blocks(div.content), nil, labs, 0),
                     blankline }
 end
 
