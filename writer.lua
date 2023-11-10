@@ -779,13 +779,9 @@ Writer.Inline.Code = function(code)
 end
 
 Writer.Inline.Math = function(math)
-    -- Conversion between LaTeX math and Typst math is out of the scope of this
-    -- writer. We return a dummy filler symbol.
-    if math.mathtype == "DisplayMath" then
-        return literal "$ quest.excl $"
-    else
-        return literal "$quest.excl$"
-    end
+    -- use the default Typst writer to render the math
+    return pandoc.write(pandoc.Pandoc(math), 'typst',
+                        pandoc.PANDOC_WRITER_OPTIONS)
 end
 
 Writer.Inline.Image = function(img)
