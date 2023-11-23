@@ -60,7 +60,7 @@ local TABLE_EVEN_FILL = "red.lighten(95%)"
 -- Default header block.
 local HEADERS_DEFAULT = string.format([[
 // This header block can be overridden by the typst-headers metadata variable.
-#import "@preview/tablex:0.0.4": tablex, rowspanx, colspanx, hlinex, vlinex
+#import "@preview/tablex:0.0.6": tablex, rowspanx, colspanx, hlinex, vlinex
 
 #let table-fill(columns: none, header-rows: 1, x, y) = {
   if header-rows > 0 and y == 0 {%s}
