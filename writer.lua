@@ -1,5 +1,6 @@
 -- A custom Pandoc Typst writer.
 -- Louis Vignoli
+-- https://github.com/lvignoli/typst-pandoc
 
 -- Modified by William Lupton (intended only for testing)
 
@@ -23,7 +24,7 @@ Extensions = {
 
 -- Default template
 Template = function()
-    return pandoc.template.default('typst')
+    return pandoc.template.default("typst")
 end
 
 -- For better performance we put these functions in local variables:
@@ -49,27 +50,28 @@ local stringify = pandoc.utils.stringify
 
 -- Other constants
 -- XXX should allow some of these to be overridden by metadata
-local ESCAPE_EXTRA_CHARS = "/-" -- if this includes "-", it must come last
+local ESCAPE_EXTRA_CHARS = "/=-" -- if this includes "-", it must come last
 local ESCAPE_PATTERN = "[" .. "#$\\'\"`_*@<~" .. ESCAPE_EXTRA_CHARS .. "]"
 local TAB_SIZE = 2 -- Default indent size for generated Typst code
 local BLOCKQUOTE_BOX_RELATIVE_WIDTH = "97%"
 local IMAGE_DEFAULT_SCALE = 1.0
 local TABLE_HEADER_FILL = "white.darken(10%)"
-local TABLE_EVEN_FILL = "red.lighten(95%)"
+local TABLE_EVEN_FILL = "red.lighten(98%)"
 
 -- Default header block.
+-- XXX need to review naming and location
 local HEADERS_DEFAULT = string.format([[
 // This header block can be overridden by the typst-headers metadata variable.
-#import "@preview/tablex:0.0.6": tablex, rowspanx, colspanx, hlinex, vlinex
 
-#let table-fill(columns: none, header-rows: 1, x, y) = {
+#let bbf-table-fill(columns: none, header-rows: 1, x, y) = {
   if header-rows > 0 and y == 0 {%s}
-  else if calc.even(x) {%s}
+  // XXX have disabled fill for even rows
+  // else if calc.even(x) {%s}
 }
 
 // scale = 1 will size the image at 1px = 1pt
-#let image-scale = 1
-#let natural-image(scale: image-scale, ..args) = style(styles => {
+#let bbf-image-scale = 1
+#let bbf-image(scale: bbf-image-scale, ..args) = style(styles => {
   let named = args.named()
   if "width" in named or "height" in named {
     image(..args)
@@ -97,7 +99,7 @@ local HEADERS_DEFAULT = string.format([[
 
 -- Whether to use tablex by default, rather than table.
 -- XXX disabled because there are currently too many problems with
---     tablex to use it by default
+--     tablex to use it by default, e.g. WT-181 Appendix 2 tables
 local USE_TABLEX_DEFAULT = false
 
 -- Writer is the custom writer that Pandoc will use.
@@ -129,17 +131,18 @@ end
 local command = function(cmd, opts, sep, noterm)
     opts = opts or {}
     sep = sep or cr
-    local open = #opts > 0 and "(" or ""
-    local close = #open > 0 and not noterm and ")" or ""
     local comps = pandoc.List()
-    comps:insert(open)
+    local first = true
     for i, nv in ipairs(opts) do
         local name, value = table.unpack(nv)
         if value ~= nil then
-            if i > 1 then
+            if first then
+                comps:insert("(")
+            end
+            if not first then
                 comps:insert(",")
             end
-            if i > 1 or sep == cr then
+            if not first or sep == cr then
                 comps:insert(sep)
             end
             if not name then
@@ -147,21 +150,28 @@ local command = function(cmd, opts, sep, noterm)
             else
                 comps:insert(hang(value, TAB_SIZE, concat {name, ":", space}))
             end
+            first = false
         end
     end
-    comps:insert(close)
+    if not first and not noterm then
+        comps:insert(")")
+    end
     return hang(concat(comps), TAB_SIZE, cmd)
 end
 
 -- labels parses attrs to return labels
-local labels = function(attr, filter_names, element_name)
+-- XXX temporarily returns {identifier, classes, attributes} table, roughly
+--     like the original pandoc Attr object
+local labels = function(attr, filter_names, element_name, prefix)
     filter_names = filter_names or {}
     element_name = element_name or "element"
+    prefix = prefix or "bbf-"
 
     -- this can be called with labs from a previous call, in
     -- which case just return them
     if pandoc.utils.type(attr) ~= "Attr" then
-        return (attr or pandoc.List()), pandoc.List()
+        return (attr or {identifier=nil, classes=pandoc.List(),
+                         attributes={}}), pandoc.List()
     end
 
     -- helper to check whether a name matches the filter
@@ -177,26 +187,25 @@ local labels = function(attr, filter_names, element_name)
         return false
     end
 
-    local labs = pandoc.List()
+    local labs = {identifier=nil, classes=pandoc.List(), attributes={}}
     local filtered = {}
     if attr then
-        for name, value in pairs(attr.attributes) do
-            if matches_filter(name) then
-                filtered[name] = value
-            else
-                -- XXX value might contain spaces, e.g. style
-                labs:insert(name .. "::" .. value)
-            end
-        end
         if #attr.identifier > 0 then
-            labs:insert(attr.identifier)
+            labs.identifier = attr.identifier
         end
         for _, class in ipairs(attr.classes) do
             if matches_filter(class, true) then
                 -- note that this is a string
                 filtered[class] = "true"
             else
-                labs:insert("cls:" .. class)
+                labs.classes:insert(prefix .. class)
+            end
+        end
+        for name, value in pairs(attr.attributes) do
+            if matches_filter(name) then
+                filtered[name] = value
+            else
+                labs.attributes[prefix .. name] = value
             end
         end
     end
@@ -211,15 +220,25 @@ end
 -- Any additional # in cmd is the caller responsibility.
 local inline_wrap = function(doc, cmd, attr_or_labs)
     local labs = labels(attr_or_labs)
-    if #labs == 0 then
-        labs = {""}
+
+    local cmd_is_class = not cmd and labs.classes and labs.classes[1]
+
+    cmd = cmd_is_class and "#" .. labs.classes[1] or cmd or "#"
+    doc = doc and concat { cmd, "[", doc, "]" } or cmd
+
+    if labs.identifier then
+        doc = concat { doc, "<", labs.identifier, ">"}
     end
 
-    for i, lab in ipairs(labs) do
-        local tcmd = i == 1 and (cmd or "#box") or "#box"
-        local tlab = #lab > 0 and concat { space, "<", lab, ">" } or empty
-        local tdoc = doc and brackets(doc) or ""
-        doc = concat { tcmd, tdoc, tlab }
+    for i, class in ipairs(labs.classes) do
+        if not (i == 1 and cmd_is_class) then
+            doc = concat { "#", class, "[", doc, "]" }
+        end
+    end
+
+    for name, value in pairs(labs.attributes) do
+        -- XXX value might already contain double quotes
+        doc = concat { "#", name, "(", "[", doc, "]", ', "', value, '")' }
     end
 
     return doc
@@ -234,17 +253,25 @@ end
 local block_wrap = function(doc, cmd, attr_or_labs, indent)
     indent = indent or TAB_SIZE
     local labs = labels(attr_or_labs)
-    if #labs == 0 then
-        labs = {""}
+
+    local cmd_is_class = not cmd and labs.classes and labs.classes[1]
+
+    cmd = cmd_is_class and "#" .. labs.classes[1] or cmd or "#"
+    doc = doc and concat { cmd, "[", cr, nest(doc, indent), cr, "]" } or cmd
+
+    if labs.identifier then
+        doc = concat { doc, space, "<", labs.identifier, ">"}
     end
 
-    for i, lab in ipairs(labs) do
-        local tcmd = i == 1 and (cmd or "#block") or "#block"
-        local tlab = #lab > 0 and concat {space, "<", lab, ">"} or empty
-        local sep = i > 1 and space or cr
-        local ind = i > 1 and 0 or indent
-        local tdoc = doc and concat { "[", sep, nest(doc, ind), sep, "]" } or ""
-        doc = concat { tcmd, tdoc, tlab }
+    for i, class in ipairs(labs.classes) do
+        if not (i == 1 and cmd_is_class) then
+            doc = concat { "#", class, "[", cr, doc, "]" }
+        end
+    end
+
+    for name, value in pairs(labs.attributes) do
+        -- XXX value might already contain double quotes
+        doc = concat { "#", name, "[", cr, doc, ', "', value, '"]' }
     end
 
     return doc
@@ -268,7 +295,7 @@ Writer.Pandoc = function(doc, opts)
         -- XXX meta_to_context() appears to replace Lists with tables, which
         --     confuses template expansion (e.g. author gets expanded even if
         --     not defined), so set empty lists to nil
-        if pandoc.utils.type(mval) == 'List' and #mval == 0 then
+        if pandoc.utils.type(mval) == "List" and #mval == 0 then
             -- temp("nilled", name, value)
             vars[name] = nil
         end
@@ -353,23 +380,23 @@ Writer.Block.Plain = function(el)
 end
 
 Writer.Block.Para = function(para)
-    return { Writer.Inlines(para.content), blankline }
+    return concat { inlines(para.content), blankline }
 end
 
 Writer.Block.Header = function(hdr)
-    local labs, opts = labels(hdr.attr, {'unlisted'}, "header")
+    local labs, opts = labels(hdr.attr, {"unlisted", "unnumbered"}, "header")
 
     local content = inlines(hdr.content)
     local heading
     if not next(opts) then
         local hdg_cmd = concat { ("="):rep(hdr.level), space, content }
-        heading = inline_wrap(nil, hdg_cmd, labs)
+        heading = block_wrap(nil, hdg_cmd, labs)
     else
         local cmd_opts = {
             {"level", hdr.level},
             {"outlined", opts.unlisted and "false" or "true"}}
         local hdg_cmd = command("#heading", cmd_opts, space)
-        heading = inline_wrap(content, hdg_cmd, labs)
+        heading = block_wrap(content, hdg_cmd, labs)
     end
     return concat { blankline, heading, blankline }
 end
@@ -471,14 +498,18 @@ end
 -- if columns are too narrow, try reducing --columns (the default is 72)
 -- XXX TBD all attrs, row and cell aligns, multiple bodies (not possible)
 Writer.Block.Table = function(tab, opts)
-    local labs, opts = labels(tab.attr, {'typst-use-tablex'}, "table")
+    local labs, opts = labels(tab.attr, {"typst-use-tablex"}, "table")
 
     -- helper for checking whether a list of rows use any advanced features
     local function is_advanced(rows)
         if rows and #rows > 0 then
             for _, row in ipairs(rows) do
+                if #row.attr.classes > 0 then
+                    return true
+                end
                 for i, cell in ipairs(row.cells) do
-                    if cell.col_span > 1 or cell.row_span > 1 then
+                    if (#cell.attr.classes > 0 or cell.col_span > 1 or
+                        cell.row_span > 1) then
                         return true
                     end
                 end
@@ -509,7 +540,7 @@ Writer.Block.Table = function(tab, opts)
 
     -- this can be overridden by the typst-use-tablex attribute
     -- XXX could use a utility for checking for valid Boolean values
-    local use_tablex_opt = opts['typst-use-tablex']
+    local use_tablex_opt = opts["typst-use-tablex"]
     local use_tablex = advanced or USE_TABLEX_DEFAULT
     if use_tablex_opt then use_tablex = (use_tablex_opt == "true") end
 
@@ -534,11 +565,11 @@ Writer.Block.Table = function(tab, opts)
         aligns:insert(align)
     end
 
-    -- create the table command (table-fill() must be defined somewhere)
+    -- create the table command (bbf-table-fill() must be defined somewhere)
     local cmd_name = use_tablex and "#tablex" or "#table"
     local header_rows = #tab.head.rows
-    local fill = string.format("table-fill.with(columns: %d, header-rows: %s)",
-                               #columns, header_rows)
+    local fill = string.format("bbf-table-fill.with(columns: %d, " ..
+                                   "header-rows: %s)", #columns, header_rows)
     local cmd_opts = pandoc.List({{"columns", array(columns)},
                                   {"align", array(aligns)},
                                   {"fill", fill}})
@@ -567,36 +598,60 @@ Writer.Block.Table = function(tab, opts)
     end
 
     -- helper for adding the cells from a list of rows
+    -- XXX could/should make more use of helper functions
     local function add_cells(rows, strong)
+        local prefix = "bbf-tablex-"
         if rows and #rows > 0 then
             for _, row in ipairs(rows) do
                 for i, cell in ipairs(row.cells) do
+                    -- row and cell attributes are combined
+                    -- XXX only the classes are currently used
+                    local labs = labels(row.attr, nil, nil, prefix)
+                    for _, class in ipairs(labels(cell.attr, nil, nil,
+                                                  prefix).classes) do
+                        if not labs.classes.class then
+                            labs.classes:insert(class)
+                        end
+                    end
+
+                    -- put each row on a new line
                     comps:insert ","
                     comps:insert(i == 1 and cr or space)
-                    if use_tablex and cell.col_span > 1 then
-                        comps:insert(string.format("colspanx(%d)",
-                                                   cell.col_span))
+
+                    -- contents
+                    local contents = brackets(blocks(cell.contents))
+                    local is_content = true
+
+                    -- strong
+                    if strong then
+                        contents = concat { "[#strong", contents, "]" }
                     end
-                    if (use_tablex and cell.col_span > 1 and
-                        cell.row_span > 1) then
-                        comps:insert "("
+
+                    -- USE AN explicit cellx for colspan and rowspan
+                    local colspan = cell.col_span > 1 and cell.col_span or nil
+                    local rowspan = cell.row_span > 1 and cell.row_span or nil
+                    if colspan or rowspan  then
+                        local cellx = command("cellx", {
+                                                  {"colspan", colspan},
+                                                  {"rowspan", rowspan}}, " ")
+                        contents = concat { cellx, contents }
+                        is_content = false
                     end
-                    if use_tablex and cell.row_span > 1 then
-                        comps:insert(string.format("rowspanx(%d)",
-                                                   cell.row_span))
+
+                    -- row / cell classes
+                    for _, class in ipairs(labs.classes) do
+                        local lp = is_content and empty or "("
+                        local rp = is_content and empty or ")"
+                        contents = concat { class, lp, contents, rp }
+                        is_content = false
                     end
-                    local contents = blocks(cell.contents)
-                    if not use_tablex and strong then
-                        contents = inline_wrap(contents, "#strong")
+
+                    -- XXX should review wrap/hang
+                    if tostring(contents):match("\n") then
+                        contents = concat { cr, contents }
                     end
-                    local sep = tostring(contents):match("\n") and cr or empty
-                    comps:insert(hang(concat { contents, sep }, TAB_SIZE,
-                                      concat { sep, "[", sep }))
-                    comps:insert("]")
-                    if (use_tablex and cell.col_span > 1 and
-                        cell.row_span > 1) then
-                        comps:insert ")"
-                    end
+
+                    comps:insert(contents)
                 end
             end
         end
@@ -634,6 +689,8 @@ Writer.Block.Table = function(tab, opts)
         caption = inlines(tab.caption.short)
     end
     if caption then
+        local align_cmd = command("#align(left)")
+        result = inline_wrap(result, align_cmd)
         local cmd_opts = {
             {"kind", "table"},
             {"caption", brackets(caption)}}
@@ -780,14 +837,15 @@ end
 
 Writer.Inline.Math = function(math)
     -- use the default Typst writer to render the math
-    return pandoc.write(pandoc.Pandoc(math), 'typst',
+    return pandoc.write(pandoc.Pandoc(math), "typst",
                         pandoc.PANDOC_WRITER_OPTIONS)
 end
 
 Writer.Inline.Image = function(img)
     -- XXX width and height units are passed straight through, so must be
     --     valid for Typst, e.g., percentages are OK but pixels aren't
-    local labs, opts = labels(img.attr, {"width", "height"}, "image")
+    local labs, opts = labels(img.attr,
+                              {"width", "height", "typst-scale"}, "image")
 
     -- XXX could try to derive the scale from width/height in pixels?
     -- XXX would it be useful to support independent width and height scales?
@@ -795,8 +853,10 @@ Writer.Inline.Image = function(img)
         {nil, double_quotes(img.src)},
         {"alt", #img.title > 0 and double_quotes(img.title) or nil},
         {"width", opts.width},
-        {"height", opts.height}}
-    local img_cmd = command("#natural-image", cmd_opts, space)
+        {"height", opts.height},
+        {"scale", opts["typst-scale"]}
+    }
+    local img_cmd = command("#bbf-image", cmd_opts, space)
     return inline_wrap(nil, img_cmd, labs)
 end
 
