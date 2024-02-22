@@ -498,7 +498,9 @@ end
 -- if columns are too narrow, try reducing --columns (the default is 72)
 -- XXX TBD all attrs, row and cell aligns, multiple bodies (not possible)
 Writer.Block.Table = function(tab, opts)
-    local labs, opts = labels(tab.attr, {"typst-use-tablex"}, "table")
+    local labs, opts = labels(tab.attr,
+                              {"typst-use-tablex", "valign-top",
+                               "valign-middle", "valign-bottom"}, "table")
 
     -- helper for checking whether a list of rows use any advanced features
     local function is_advanced(rows)
@@ -544,6 +546,12 @@ Writer.Block.Table = function(tab, opts)
     local use_tablex = advanced or USE_TABLEX_DEFAULT
     if use_tablex_opt then use_tablex = (use_tablex_opt == "true") end
 
+    -- vertical alignment
+    local valign = nil
+    if opts["valign-top"] then valign = "top" end
+    if opts["valign-middle"] then valign = "horizon" end
+    if opts["valign-bottom"] then valign = "bottom" end
+
     -- column specs (also calculate the total width)
     local columns = pandoc.List()
     local aligns = pandoc.List()
@@ -552,6 +560,13 @@ Writer.Block.Table = function(tab, opts)
         local align, width = table.unpack(colspec)
         align = ({AlignLeft="left",
                   AlignRight="right", AlignCenter="center"})[align] or "auto"
+        if valign then
+            if align == "auto" then
+                align = valign
+            else
+                align = align .. "+" .. valign
+            end
+        end
         if not width then
             width = "auto"
         else
@@ -681,6 +696,7 @@ Writer.Block.Table = function(tab, opts)
     end
 
     -- if there's a caption, wrap the table in a figure
+    -- XXX labs are ignored if there's no caption
     -- XXX should lay it out better
     local caption = nil
     if tab.caption.long and #tab.caption.long > 0 then
