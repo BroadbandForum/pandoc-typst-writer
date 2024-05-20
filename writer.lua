@@ -17,6 +17,66 @@ local logging = require "logging"
 local warning = logging.warning
 local temp = logging.temp
 
+-- Known classes. These classes will be wrapped as function calls (with a
+-- "bbf-" prefix) by inline_wrap() and block_wrap(), and must be defined in
+-- typst-template.typ (otherwise Typst compilation will fail)
+local known_classes = pandoc.List{
+    "acknowledgments",
+    "annex1",
+    "annex2",
+    "annex3",
+    "annex4",
+    "annex5",
+    "annex6",
+    "annex",
+    "appendix1",
+    "appendix2",
+    "appendix3",
+    "appendix4",
+    "appendix5",
+    "appendix6",
+    "appendix",
+    "boldfirst",
+    "borderless",
+    "bug",
+    "clear",
+    "code",
+    "csl-bib-body",
+    "csl-entry",
+    "csl-left-margin",
+    "csl-right-inline",
+    "ebnf",
+    "editors",
+    "emphasis",
+    "gray",
+    "hidden",
+    "issue-history",
+    "left",
+    "new-file",
+    "new-page",
+    "nobreak",
+    "nocase",
+    "nosidelines",
+    "note",
+    "psls",
+    "release",
+    "references",
+    "requirements-table",
+    "revision-history",
+    "right",
+    "same-file",
+    "same-section",
+    "see-also",
+    "spacer",
+    "table-blue",
+    "table-command",
+    "table-object",
+    "table-red",
+    "table-right",
+    "tip",
+    "wads"
+}
+
 -- Writer options: extensions
 Extensions = {
     citations = false
@@ -96,11 +156,6 @@ local HEADERS_DEFAULT = string.format([[
   }
 })
 ]], TABLE_HEADER_FILL, TABLE_EVEN_FILL)
-
--- Whether to use tablex by default, rather than table.
--- XXX disabled because there are currently too many problems with
---     tablex to use it by default, e.g. WT-181 Appendix 2 tables
-local USE_TABLEX_DEFAULT = false
 
 -- Writer is the custom writer that Pandoc will use.
 -- We scaffold it from Pandoc.
@@ -197,6 +252,8 @@ local labels = function(attr, filter_names, element_name, prefix)
             if matches_filter(class, true) then
                 -- note that this is a string
                 filtered[class] = "true"
+            elseif not known_classes:includes(class) then
+                warning("unsupported", element_name, "class", class)
             else
                 labs.classes:insert(prefix .. class)
             end
@@ -502,49 +559,11 @@ Writer.Block.Table = function(tab, opts)
                               {"typst-use-tablex", "valign-top",
                                "valign-middle", "valign-bottom"}, "table")
 
-    -- helper for checking whether a list of rows use any advanced features
-    local function is_advanced(rows)
-        if rows and #rows > 0 then
-            for _, row in ipairs(rows) do
-                if #row.attr.classes > 0 then
-                    return true
-                end
-                for i, cell in ipairs(row.cells) do
-                    if (#cell.attr.classes > 0 or cell.col_span > 1 or
-                        cell.row_span > 1) then
-                        return true
-                    end
-                end
-            end
-        end
-        return false
+    -- Typst v0.11 includes all tablex features natively, so typst-use-tablex
+    -- now just enables the behavior that it used to enable
+    if opts["typst-use-tablex"] then
+        labs.classes:insert("bbf-nosidelines")
     end
-
-    -- check whether table uses advanced features that require tablex
-    local advanced = false
-
-    -- head
-    if is_advanced(tab.head.rows) then
-        advanced = true
-    end
-
-    -- bodies
-    for _, body in ipairs(tab.bodies) do
-        if is_advanced(body.body) then
-            advanced = true
-        end
-    end
-
-    -- foot
-    if is_advanced(tab.foot.rows) then
-        advanced = true
-    end
-
-    -- this can be overridden by the typst-use-tablex attribute
-    -- XXX could use a utility for checking for valid Boolean values
-    local use_tablex_opt = opts["typst-use-tablex"]
-    local use_tablex = advanced or USE_TABLEX_DEFAULT
-    if use_tablex_opt then use_tablex = (use_tablex_opt == "true") end
 
     -- vertical alignment
     local valign = nil
@@ -581,44 +600,32 @@ Writer.Block.Table = function(tab, opts)
     end
 
     -- create the table command (bbf-table-fill() must be defined somewhere)
-    local cmd_name = use_tablex and "#tablex" or "#table"
     local header_rows = #tab.head.rows
     local fill = string.format("bbf-table-fill.with(columns: %d, " ..
                                    "header-rows: %s)", #columns, header_rows)
     local cmd_opts = pandoc.List({{"columns", array(columns)},
                                   {"align", array(aligns)},
                                   {"fill", fill}})
-    if use_tablex then
-        cmd_name = "#tablex"
-        -- XXX tablex doesn't ignore this when there are no header rows?
-        local repeat_header = header_rows > 0 and "true" or "false"
-        cmd_opts:extend({{"header-rows", header_rows},
-                         {"repeat-header", repeat_header},
-                         {"header-hlines-have-priority", "false"},
-                         {"auto-hlines", "true"},
-                         {"auto-vlines", "false"}})
-    end
-    local table_cmd = command(cmd_name, cmd_opts, cr, true)
+    -- additional options
+    -- local repeat_header = header_rows > 0 and "true" or "false"
+    -- cmd_opts:extend({{"header-rows", header_rows},
+    --                  {"repeat-header", repeat_header},
+    --                  {"header-hlines-have-priority", "false"},
+    --                  {"auto-hlines", "true"},
+    --                  {"auto-vlines", "false"}})
+    local table_cmd = command("#table", cmd_opts, cr, true)
 
     -- cell layout components
     local comps = pandoc.List()
 
-    -- add vlines (hard-coded to omit the first and last)
-    if use_tablex then
-        comps:insert(concat { ",", cr, "()" })
-        for i = 1, #columns - 1 do
-            comps:insert(concat { ", ", "vlinex()" })
-        end
-        comps:insert(concat { ",", space, "()" })
-    end
-
     -- helper for adding the cells from a list of rows
     -- XXX could/should make more use of helper functions
-    local function add_cells(rows, strong)
-        local prefix = "bbf-tablex-"
+    local function add_cells(rows, func)
+        local prefix = "bbf-table-"
+        local func_open = false
         if rows and #rows > 0 then
-            for _, row in ipairs(rows) do
-                for i, cell in ipairs(row.cells) do
+            for i, row in ipairs(rows) do
+                for j, cell in ipairs(row.cells) do
                     -- row and cell attributes are combined
                     -- XXX only the classes are currently used
                     local labs = labels(row.attr, nil, nil, prefix)
@@ -631,25 +638,28 @@ Writer.Block.Table = function(tab, opts)
 
                     -- put each row on a new line
                     comps:insert ","
-                    comps:insert(i == 1 and cr or space)
+                    comps:insert(j == 1 and cr or space)
+
+
+                    -- wrapper func
+                    if i == 1 and j == 1 and func then
+                        comps:insert(func)
+                        comps:insert("(")
+                        func_open = true
+                    end
 
                     -- contents
                     local contents = brackets(blocks(cell.contents))
                     local is_content = true
 
-                    -- strong
-                    if strong then
-                        contents = concat { "[#strong", contents, "]" }
-                    end
-
-                    -- USE AN explicit cellx for colspan and rowspan
+                    -- use an explicit table.cell for colspan and rowspan
                     local colspan = cell.col_span > 1 and cell.col_span or nil
                     local rowspan = cell.row_span > 1 and cell.row_span or nil
                     if colspan or rowspan  then
-                        local cellx = command("cellx", {
+                        local cell = command("table.cell", {
                                                   {"colspan", colspan},
                                                   {"rowspan", rowspan}}, " ")
-                        contents = concat { cellx, contents }
+                        contents = concat { cell, contents }
                         is_content = false
                     end
 
@@ -669,11 +679,16 @@ Writer.Block.Table = function(tab, opts)
                     comps:insert(contents)
                 end
             end
+
+            -- if opened wrapper func, close it
+            if func_open then
+                comps:insert(")")
+            end
         end
     end
 
     -- head
-    add_cells(tab.head.rows, true)
+    add_cells(tab.head.rows, "table.header")
 
     -- bodies
     for _, body in ipairs(tab.bodies) do
@@ -681,7 +696,7 @@ Writer.Block.Table = function(tab, opts)
     end
 
     -- foot
-    add_cells(tab.foot.rows, true)
+    add_cells(tab.foot.rows, "table.footer")
 
     -- add the concatenated cell components
     local result = concat { hang(concat(comps), TAB_SIZE, table_cmd), cr, ")" }
@@ -704,7 +719,9 @@ Writer.Block.Table = function(tab, opts)
     elseif tab.caption.short and #tab.caption.short > 0 then
         caption = inlines(tab.caption.short)
     end
-    if caption then
+    if not caption then
+        result = block_wrap(result, nil, labs)
+    else
         local align_cmd = command("#align(left)")
         result = inline_wrap(result, align_cmd)
         local cmd_opts = {
