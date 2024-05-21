@@ -255,7 +255,7 @@ local labels = function(attr, filter_names, element_name, prefix)
                 -- note that this is a string
                 filtered[class] = "true"
             elseif not known_classes:includes(pref .. class) then
-                warning("unsupported", element_name, "class", pref .. class)
+                warning("unsupported", element_name, "class", class)
             else
                 labs.classes:insert(pref .. class)
             end
