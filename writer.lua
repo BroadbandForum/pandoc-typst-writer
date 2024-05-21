@@ -17,64 +17,64 @@ local logging = require "logging"
 local warning = logging.warning
 local temp = logging.temp
 
--- Known classes. These classes will be wrapped as function calls (with a
--- "bbf-" prefix) by inline_wrap() and block_wrap(), and must be defined in
--- typst-template.typ (otherwise Typst compilation will fail)
+-- Known classes. These classes will be wrapped as function calls by inline_wrap()
+-- and block_wrap(), and must be defined in typst-template.typ (otherwise Typst
+-- compilation will fail)
 local known_classes = pandoc.List{
-    "acknowledgments",
-    "annex1",
-    "annex2",
-    "annex3",
-    "annex4",
-    "annex5",
-    "annex6",
-    "annex",
-    "appendix1",
-    "appendix2",
-    "appendix3",
-    "appendix4",
-    "appendix5",
-    "appendix6",
-    "appendix",
-    "boldfirst",
-    "borderless",
-    "bug",
-    "clear",
-    "code",
-    "csl-bib-body",
-    "csl-entry",
-    "csl-left-margin",
-    "csl-right-inline",
-    "ebnf",
-    "editors",
-    "emphasis",
-    "gray",
-    "hidden",
-    "issue-history",
-    "left",
-    "new-file",
-    "new-page",
-    "nobreak",
-    "nocase",
-    "nosidelines",
-    "note",
-    "psls",
-    "release",
-    "references",
-    "requirements-table",
-    "revision-history",
-    "right",
-    "same-file",
-    "same-section",
-    "see-also",
-    "spacer",
-    "table-blue",
-    "table-command",
-    "table-object",
-    "table-red",
-    "table-right",
-    "tip",
-    "wads"
+    "bbf-acknowledgments",
+    "bbf-annex1",
+    "bbf-annex2",
+    "bbf-annex3",
+    "bbf-annex4",
+    "bbf-annex5",
+    "bbf-annex6",
+    "bbf-annex",
+    "bbf-appendix1",
+    "bbf-appendix2",
+    "bbf-appendix3",
+    "bbf-appendix4",
+    "bbf-appendix5",
+    "bbf-appendix6",
+    "bbf-appendix",
+    "bbf-boldfirst",
+    "bbf-borderless",
+    "bbf-bug",
+    "bbf-clear",
+    "bbf-code",
+    "bbf-csl-bib-body",
+    "bbf-csl-entry",
+    "bbf-csl-left-margin",
+    "bbf-csl-right-inline",
+    "bbf-ebnf",
+    "bbf-editors",
+    "bbf-emphasis",
+    "bbf-gray",
+    "bbf-hidden",
+    "bbf-issue-history",
+    "bbf-left",
+    "bbf-new-file",
+    "bbf-new-page",
+    "bbf-nobreak",
+    "bbf-nocase",
+    "bbf-nosidelines",
+    "bbf-note",
+    "bbf-psls",
+    "bbf-release",
+    "bbf-references",
+    "bbf-requirements-table",
+    "bbf-revision-history",
+    "bbf-right",
+    "bbf-same-file",
+    "bbf-same-section",
+    "bbf-see-also",
+    "bbf-spacer",
+    "bbf-table-blue",
+    "bbf-table-command",
+    "bbf-table-object",
+    "bbf-table-red",
+    "bbf-table-right",
+    "bbf-tip",
+    "bbf-wads"
 }
 
 -- Writer options: extensions
@@ -249,13 +249,15 @@ local labels = function(attr, filter_names, element_name, prefix)
             labs.identifier = attr.identifier
         end
         for _, class in ipairs(attr.classes) do
+            -- allow the class already to have the prefix
+            local pref = class:sub(1, #prefix) == prefix and "" or prefix
             if matches_filter(class, true) then
                 -- note that this is a string
                 filtered[class] = "true"
-            elseif not known_classes:includes(class) then
-                warning("unsupported", element_name, "class", class)
+            elseif not known_classes:includes(pref .. class) then
+                warning("unsupported", element_name, "class", pref .. class)
             else
-                labs.classes:insert(prefix .. class)
+                labs.classes:insert(pref .. class)
             end
         end
         for name, value in pairs(attr.attributes) do
