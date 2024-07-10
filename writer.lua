@@ -102,6 +102,7 @@ local hang = layout.hang
 local inside = layout.inside
 local literal = layout.literal
 local nest = layout.nest
+local nowrap = layout.nowrap
 local parens = layout.parens
 local prefixed = layout.prefixed
 local space = layout.space
@@ -110,7 +111,7 @@ local stringify = pandoc.utils.stringify
 
 -- Other constants
 -- XXX should allow some of these to be overridden by metadata
-local ESCAPE_EXTRA_CHARS = "/=-" -- if this includes "-", it must come last
+local ESCAPE_EXTRA_CHARS = "/=%[%]-" -- if this includes "-", it must come last
 local ESCAPE_PATTERN = "[" .. "#$\\'\"`_*@<~" .. ESCAPE_EXTRA_CHARS .. "]"
 local TAB_SIZE = 2 -- Default indent size for generated Typst code
 local BLOCKQUOTE_BOX_RELATIVE_WIDTH = "97%"
@@ -162,7 +163,15 @@ local HEADERS_DEFAULT = string.format([[
 Writer = pandoc.scaffolding.Writer
 
 local inlines = Writer.Inlines
-local blocks = Writer.Blocks
+-- local blocks = Writer.Blocks
+
+local blocks = function(blks)
+    local function render_blk(blk)
+        -- return concat { '{{', blk.tag, '|', Writer.Block(blk), '}}', cr }
+        return concat { Writer.Block(blk), cr }
+    end
+    return concat(blks:map(render_blk))
+end
 
 -- escape escapes reserved Typst markup character with a backslash.
 -- XXX some of these need to be context-dependent, e.g. "/" and "-",
@@ -457,6 +466,7 @@ Writer.Block.Header = function(hdr)
         local hdg_cmd = command("#heading", cmd_opts, space)
         heading = block_wrap(content, hdg_cmd, labs)
     end
+    heading = nowrap(heading)
     return concat { blankline, heading, blankline }
 end
 
@@ -690,6 +700,7 @@ Writer.Block.Table = function(tab, opts)
     end
 
     -- head
+    -- XXX see below for a hack to embolden the header rows
     add_cells(tab.head.rows, "table.header")
 
     -- bodies
@@ -721,10 +732,21 @@ Writer.Block.Table = function(tab, opts)
     elseif tab.caption.short and #tab.caption.short > 0 then
         caption = inlines(tab.caption.short)
     end
+
+    -- XXX hack to force the header rows to be bold (only used when
+    --     there's a single header row)
+    local strong_cmd = '#show table.cell.where(y: 0): strong\n'
+
     if not caption then
+        if #tab.head.rows == 1 then
+            result = strong_cmd .. result
+        end
         result = block_wrap(result, nil, labs)
     else
         local align_cmd = command("#align(left)")
+        if #tab.head.rows == 1 then
+            align_cmd = strong_cmd .. align_cmd
+        end
         result = inline_wrap(result, align_cmd)
         local cmd_opts = {
             {"kind", "table"},
@@ -808,31 +830,34 @@ end
 Writer.Inline.LineBreak = { space, "\\", cr }
 
 Writer.Inline.Emph = function(el)
-    return { "_", inlines(el.content), "_" }
+    -- don't use '_' because it causes problems with some input
+    -- XXX should handle ';' in inline_wrap(); should it be unconditional?
+    return { inline_wrap(inlines(el.content), "#emph") .. ';' }
 end
 
 Writer.Inline.Strong = function(el)
-    return { "*", inlines(el.content), "*" }
+    -- don't use '*' because it causes problems with some input
+    return { inline_wrap(inlines(el.content), "#strong") .. ';' }
 end
 
 Writer.Inline.Strikeout = function(el)
-    return { inline_wrap(inlines(el.content), "#strike") }
+    return { inline_wrap(inlines(el.content), "#strike") .. ';' }
 end
 
 Writer.Inline.Subscript = function(el)
-    return { inline_wrap(inlines(el.content), "#sub") }
+    return { inline_wrap(inlines(el.content), "#sub") .. ';' }
 end
 
 Writer.Inline.Superscript = function(el)
-    return { inline_wrap(inlines(el.content), "#super") }
+    return { inline_wrap(inlines(el.content), "#super") .. ';' }
 end
 
 Writer.Inline.Underline = function(el)
-    return { inline_wrap(inlines(el.content), "#underline") }
+    return { inline_wrap(inlines(el.content), "#underline") .. ';' }
 end
 
 Writer.Inline.SmallCaps = function(el)
-    return { inline_wrap(inlines(el.content), "#smallcaps") }
+    return { inline_wrap(inlines(el.content), "#smallcaps") .. ';' }
 end
 
 Writer.Inline.Link = function(link)
