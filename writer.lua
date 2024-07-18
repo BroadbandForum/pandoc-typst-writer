@@ -733,6 +733,11 @@ Writer.Block.Table = function(tab, opts)
         caption = inlines(tab.caption.short)
     end
 
+    -- XXX hack to disable justification and enable hyphenation
+    local justify_cmd = '#set par(justify: false)\n'
+    local hyphenate_cmd = '#set text(hyphenate: true)\n'
+    result = justify_cmd .. hyphenate_cmd .. result
+
     -- XXX hack to force the header rows to be bold (only used when
     --     there's a single header row)
     local strong_cmd = '#show table.cell.where(y: 0): strong\n'
