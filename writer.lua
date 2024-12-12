@@ -132,12 +132,12 @@ local HEADERS_DEFAULT = string.format([[
 
 // scale = 1 will size the image at 1px = 1pt
 #let bbf-image-scale = 1
-#let bbf-image(scale: bbf-image-scale, ..args) = style(styles => {
+#let bbf-image(scale: bbf-image-scale, ..args) = context {
   let named = args.named()
   if "width" in named or "height" in named {
     image(..args)
   } else {
-    let (width, height) = measure(image(..args), styles)
+    let (width, height) = measure(image(..args))
     layout(page => {
       // XXX should allow control over this hard-coded (1.0, 0.9)
       let (max_width, max_height) = (1.0 * page.width, 0.9 * page.height)
@@ -155,7 +155,7 @@ local HEADERS_DEFAULT = string.format([[
       image(..args, width: new_width, height: new_height)
     })
   }
-})
+}
 ]], TABLE_HEADER_FILL, TABLE_EVEN_FILL)
 
 -- Writer is the custom writer that Pandoc will use.
@@ -866,14 +866,21 @@ Writer.Inline.SmallCaps = function(el)
 end
 
 Writer.Inline.Link = function(link)
+    -- if the content ends with '?' assume that citeproc has failed to find it
+    local invalid = stringify(link.content):match('%?$')
     local target = link.target
     if target:sub(1, 1) == "#" then
         target = "<" .. target:sub(2) .. ">"
     else
         target = double_quotes(target)
     end
-    local cmd = "#link" .. parens(target)
-    return inline_wrap(inlines(link.content), cmd)
+    local inlines = inlines(link.content)
+    if invalid then
+        return inlines
+    else
+        local cmd = "#link" .. parens(target)
+        return inline_wrap(inlines, cmd)
+    end
 end
 
 Writer.Inline.Span = function(el)
