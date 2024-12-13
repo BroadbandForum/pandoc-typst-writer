@@ -734,9 +734,14 @@ Writer.Block.Table = function(tab, opts)
     end
 
     -- XXX hack to disable justification and enable hyphenation
+    -- XXX also, starting with Typst 0.12.0, need to allow break after
+    --     ',' and '.' (maybe shouldn't do this unconditionally)
     local justify_cmd = '#set par(justify: false)\n'
     local hyphenate_cmd = '#set text(hyphenate: true)\n'
-    result = justify_cmd .. hyphenate_cmd .. result
+    local break_on_comma_cmd = '#show regex("\\>,"): "," + sym.zws\n'
+    local break_on_period_cmd = '#show regex("\\>\\."): "." + sym.zws\n'
+    result = justify_cmd .. hyphenate_cmd .. break_on_comma_cmd ..
+        break_on_period_cmd .. result
 
     -- XXX hack to force the header rows to be bold (only used when
     --     there's a single header row)
